@@ -47,7 +47,11 @@ section.info h2{font:700 20px Unbounded,sans-serif;letter-spacing:-.02em;margin:
 .inci{font-size:14px;color:var(--muted);max-width:70ch}
 .note{background:var(--soft);border-radius:12px;padding:14px 18px;max-width:70ch;font-size:14px}
 form.order{display:grid;gap:12px;max-width:460px}
-form.order input,form.order textarea{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 14px;width:100%}
+form.order input,form.order textarea,form.order select{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 14px;width:100%}
+.field-label{font-size:14px;font-weight:600;margin:4px 0 -6px}
+.form-actions{display:flex;gap:10px;flex-wrap:wrap}
+.form-actions .btn{border:0}
+.btn.secondary{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
 .msg{min-height:24px;font-size:14px}
 .msg.err{color:#c0392b}
 pre#preview{white-space:pre-wrap;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;display:none}
@@ -104,9 +108,13 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--muted);font-s
     <form class="order" id="form" novalidate>
       <input name="name" placeholder="Имя" autocomplete="name" required>
       <input name="phone" placeholder="Телефон" autocomplete="tel" inputmode="tel" required>
-      <input name="address" placeholder="Адрес доставки" autocomplete="street-address" required>
+      <label class="field-label" for="delivery">Способ получения</label>
+      <select name="delivery" id="delivery" required></select>
+      <input name="address" id="address" placeholder="Адрес доставки / пункт выдачи" autocomplete="street-address" required>
+      <label class="field-label" for="payment">Способ оплаты</label>
+      <select name="payment" id="payment" required></select>
       <div class="msg" id="msg" role="status"></div>
-      <button class="btn" type="submit">Отправить заказ</button>
+      <div class="form-actions"><button class="btn" id="submitBtn" type="submit">Отправить заказ</button><a class="btn secondary" id="telegramBtn" href="https://t.me/kanaruka" target="_blank" rel="noopener" hidden>Отправить в Telegram</a></div>
       <pre id="preview"></pre>
     </form>
   </section>
@@ -127,6 +135,7 @@ const CONFIG = {
 
   // Ваш ник в Telegram без значка @ (необязательно). Пример: "alex_shop"
   telegram: "kanaruka",
+  email: "alexgavrilov086@gmail.com",
 
   // Способы доставки: список вариантов в кавычках через запятую
   delivery: ["Курьер", "Почта России", "СДЭК", "Самовывоз"],
@@ -149,20 +158,41 @@ $("#thumbs").addEventListener("click",e=>{
 });
 $("#inc").onclick=()=>{qty=Math.min(20,qty+1);$("#q").textContent=qty};
 $("#dec").onclick=()=>{qty=Math.max(1,qty-1);$("#q").textContent=qty};
-$("#form").onsubmit=e=>{
+// Заполняем варианты получения и оплаты из настроек.
+$("#delivery").innerHTML=CONFIG.delivery.map(x=>`<option value="${x}">${x}</option>`).join("");
+$("#payment").innerHTML=CONFIG.pay.map(x=>`<option value="${x}">${x}</option>`).join("");
+$("#delivery").addEventListener("change",()=>{
+  const pickup=$("#delivery").value==="Самовывоз";
+  $("#address").placeholder=pickup?"Адрес или удобное время самовывоза":"Адрес доставки / пункт выдачи";
+});
+
+$("#form").onsubmit=async e=>{
   e.preventDefault();
-  const f=e.target,m=$("#msg");
-  if(!f.name.value.trim()||f.phone.value.replace(/\D/g,"").length<10||!f.address.value.trim()){
-    m.className="msg err";m.textContent="Заполните имя, телефон (от 10 цифр) и адрес доставки.";return}
-  const text=`Заказ: Взбитый бальзам для стоп «Суфле», 150 мл\nКоличество: ${qty}\nСумма: ${fmt(CONFIG.price*qty)}\nИмя: ${f.name.value}\nТелефон: ${f.phone.value}\nАдрес: ${f.address.value}`;
-  m.className="msg";
-  if(CONFIG.email){
-    location.href=`mailto:${CONFIG.email}?subject=${encodeURIComponent("Новый заказ")}&body=${encodeURIComponent(text)}`;
-    m.textContent="Открываем почту, чтобы отправить заказ.";
-  }else{
-    const p=$("#preview");p.style.display="block";p.textContent=text;
-    m.textContent="Заказ сформирован.";
+  const f=e.target,m=$("#msg"),btn=$("#submitBtn"),tg=$("#telegramBtn");
+  const phone=f.phone.value.replace(/\D/g,"");
+  if(!f.name.value.trim()||phone.length<10||!f.address.value.trim()){
+    m.className="msg err";m.textContent="Заполните имя, корректный телефон и адрес или данные самовывоза.";return;
   }
+  const orderText=`Заказ: Взбитый бальзам для стоп «Суфле», 150 мл\nКоличество: ${qty}\nСумма: ${fmt(CONFIG.price*qty)}\nИмя: ${f.name.value.trim()}\nТелефон: ${f.phone.value.trim()}\nСпособ получения: ${f.delivery.value}\nАдрес / детали: ${f.address.value.trim()}\nОплата: ${f.payment.value}`;
+  const tgUrl=`https://t.me/${encodeURIComponent(CONFIG.telegram)}?text=${encodeURIComponent(orderText)}`;
+  tg.href=tgUrl;tg.hidden=false;
+  $("#preview").style.display="block";$("#preview").textContent=orderText;
+  btn.disabled=true;btn.textContent="Отправляем…";m.className="msg";m.textContent="Отправляем заказ на почту…";
+  try{
+    if(!CONFIG.web3formsKey){throw new Error("Не указан ключ Web3Forms");}
+    const data=new FormData();
+    data.append("access_key",CONFIG.web3formsKey);
+    data.append("subject","Новый заказ — Бактодермстоп");
+    data.append("from_name","Сайт Бактодермстоп");
+    data.append("message",orderText);
+    const response=await fetch("https://api.web3forms.com/submit",{method:"POST",body:data});
+    const result=await response.json();
+    if(!response.ok||!result.success)throw new Error(result.message||"Не удалось отправить заказ");
+    m.textContent="Заказ отправлен на alexgavrilov@gmail.com. Для дублирования нажмите «Отправить в Telegram».";
+    f.reset();$("#delivery").selectedIndex=0;$("#payment").selectedIndex=0;
+  }catch(err){
+    m.className="msg err";m.textContent="Не удалось отправить заказ на почту: "+err.message+". Можно отправить его через Telegram кнопкой ниже.";
+  }finally{btn.disabled=false;btn.textContent="Отправить заказ";}
 };
 price();
 </script>
